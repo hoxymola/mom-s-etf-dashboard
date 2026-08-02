@@ -45,6 +45,7 @@ def _fdr_read(symbol, start):
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, "data", "holdings.json")
+DATA_TEMPLATE_FILE = os.path.join(BASE_DIR, "data", "holdings.example.json")
 
 app = Flask(__name__)
 
@@ -57,6 +58,12 @@ _cache_date = None
 # 데이터 파일 읽기 / 쓰기
 # ----------------------------------------------------------------------
 def load_data():
+    # 처음 실행하는 컴퓨터라 holdings.json이 없으면, 빈 틀(예시 템플릿)로 새로 만듭니다.
+    if not os.path.exists(DATA_FILE):
+        with open(DATA_TEMPLATE_FILE, "r", encoding="utf-8") as f:
+            template = f.read()
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            f.write(template)
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
