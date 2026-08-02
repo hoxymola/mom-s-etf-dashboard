@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
+
+# Claude Code / OMC 세션 상태
+.omc/
+
+# 실제 보유 데이터 (개인 자산 정보 - 커밋하지 않음)
+data/holdings.json
+data/holdings.json.bak

@@ -1,5 +1,10 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 echo "ETF 대시보드를 준비합니다..."
-pip3 install -q flask finance-datareader
-python3 app.py
+
+if [ ! -d ".venv" ]; then
+  python3 -m venv .venv
+fi
+source .venv/bin/activate
+pip install -q -r requirements.txt
+python app.py

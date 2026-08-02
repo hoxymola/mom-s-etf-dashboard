@@ -68,7 +68,14 @@
   tr:hover td{background:#fafcff}
   .up{color:var(--up)} .down{color:var(--down)} .flat{color:var(--flat)}
   .sell-tag{display:inline-block;font-size:11px;font-weight:800;color:#fff;background:var(--warn);
-    border-radius:6px;padding:1px 7px;margin-left:6px;vertical-align:middle}
+    border-radius:6px;padding:1px 7px;margin-left:6px;vertical-align:middle;cursor:pointer}
+  .memo-tag{display:inline-block;font-size:11px;font-weight:800;color:var(--accent);background:var(--accent-soft);
+    border:1px solid #cfe6db;border-radius:6px;padding:1px 7px;margin-left:6px;vertical-align:middle;cursor:pointer}
+  .memo-add{display:inline-block;font-size:11px;color:var(--muted);border:1px dashed #c7cdd6;
+    border-radius:6px;padding:1px 7px;margin-left:6px;vertical-align:middle;cursor:pointer}
+  .memo-add:hover{color:var(--accent);border-color:var(--accent)}
+  table.holdings{table-layout:fixed}
+  .memo-cell{color:var(--muted)}
   .nocode{display:inline-block;font-size:11px;font-weight:800;color:var(--warn);background:var(--warn-soft);
     border:1px solid #f0dcb4;border-radius:6px;padding:1px 7px;margin-left:6px;cursor:pointer}
   .editable{cursor:pointer;border-bottom:1px dashed #c7cdd6}
@@ -131,6 +138,7 @@
     body.printing-today header.top, body.printing-today .nocode{ display:none !important; }
     body.printing-today .editable{ border-bottom:none !important; }
     body.printing-today .tradeable{ border-bottom:none !important; color:var(--ink) !important; }
+    body.printing-today .memo-add{ display:none !important; }
     body.printing-today #printBar{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
       border-bottom:1.5px solid #1a2332; padding-bottom:3px; margin-bottom:6px; }
     body.printing-today .pb-title{ font-size:13px; font-weight:800; }
@@ -153,7 +161,7 @@
     body.printing-today td.name, body.printing-today th.name{ min-width:0; }
     body.printing-today tr{ page-break-inside:avoid; }
     body.printing-today tr:hover td{ background:none; }
-    body.printing-today .sell-tag{ padding:0 5px; font-size:8px; margin-left:4px; }
+    body.printing-today .sell-tag, body.printing-today .memo-tag{ padding:0 5px; font-size:8px; margin-left:4px; }
     body.printing-today .tblwrap{ overflow:visible; }
   }
 
@@ -412,10 +420,12 @@ function renderToday(){
   for(const acc of STATE.계좌){
     let rows='';
     for(const h of acc.종목){
-      const sell = h.메모 && h.메모.includes('매도') ? `<span class="sell-tag">${h.메모}</span>`:'';
+      const memoTag = h.메모
+        ? `<span class="${h.메모.includes('매도')?'sell-tag':'memo-tag'}" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','memo')" title="클릭하면 메모 수정">${h.메모}</span>`
+        : `<span class="memo-add" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','memo')" title="메모 추가">+메모</span>`;
       const noCode = h.코드없음 ? `<span class="nocode" onclick="openCode('${acc.계좌명}','${esc(h.종목명)}')">코드 없음</span>`:'';
       rows += `<tr>
-        <td class="name"><span class="tradeable" onclick="openTrade('${acc.계좌명}','${esc(h.종목명)}')" title="클릭하면 매수/매도">${h.종목명}</span>${sell}${noCode}</td>
+        <td class="name"><span class="tradeable" onclick="openTrade('${acc.계좌명}','${esc(h.종목명)}')" title="클릭하면 매수/매도">${h.종목명}</span>${memoTag}${noCode}</td>
         <td class="editable" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','qty')">${h.수량!=null?h.수량.toLocaleString('ko-KR'):'–'}</td>
         <td class="editable ${h.평단가==null?'muted-cell':''}" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','avg')">${h.평단가!=null?price(h.평단가):'입력'}</td>
         <td>${price(h.어제종가)}</td>
@@ -432,7 +442,9 @@ function renderToday(){
         <div class="right"><div class="r-lbl">계좌 수익률 / 평가금액</div>
           <div class="r-val ${cls(acc.수익률)}">${pct(acc.수익률)} <span style="color:var(--ink);font-size:15px">· ${won(acc.평가금액합)}</span></div></div>
       </div>
-      <div class="tblwrap"><table>
+      <div class="tblwrap"><table class="holdings">
+        <colgroup><col style="width:32%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%">
+          <col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%"></colgroup>
         <thead><tr><th class="name">종목</th><th>수량</th><th>평단가</th><th>어제종가</th><th>오늘종가</th>
           <th>어제수익률</th><th>오늘수익률</th><th>평가금액</th><th>평가손익</th></tr></thead>
         <tbody>${rows}</tbody></table></div></div>`;
@@ -658,6 +670,7 @@ function renderManage(){
         <td>${h.종목코드? '<b>'+h.종목코드+'</b>' : `<span class="nocode" onclick="openCode('${acc.계좌명}','${esc(h.종목명)}')">코드 없음</span>`}</td>
         <td>${h.수량!=null?h.수량:'–'}</td>
         <td>${h.평단가!=null?price(h.평단가):'<span class="muted-cell">미입력</span>'}</td>
+        <td class="name editable" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','memo')" title="클릭하면 메모 수정">${h.메모? h.메모 : '<span class="muted-cell">입력</span>'}</td>
         <td style="white-space:nowrap">
             <button class="btn mini" onclick="openTrade('${acc.계좌명}','${esc(h.종목명)}')">매수/매도</button>
             <button class="btn mini" onclick="openCode('${acc.계좌명}','${esc(h.종목명)}')">코드</button>
@@ -668,7 +681,7 @@ function renderManage(){
     box.innerHTML+=`<div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
         <h3 style="font-size:16px">${acc.계좌명}</h3>
         <button class="btn primary mini" onclick="openAdd('${acc.계좌명}')">＋ 종목 추가</button></div>
-      <div class="tblwrap"><table><thead><tr><th class="name">종목</th><th>코드</th><th>수량</th><th>평단가</th><th></th></tr></thead>
+      <div class="tblwrap"><table><thead><tr><th class="name">종목</th><th>코드</th><th>수량</th><th>평단가</th><th class="name">메모</th><th></th></tr></thead>
       <tbody data-acc="${acc.계좌명}" class="drag-body">${rows}</tbody></table></div>`;
   }
   enableDrag();
@@ -799,9 +812,12 @@ function openEdit(acc,name,mode){
   document.getElementById('edit-qty').value=h.수량??'';
   document.getElementById('edit-avg').value=h.평단가??'';
   document.getElementById('edit-memo').value=h.메모??'';
-  document.getElementById('fld-memo').style.display = mode==='all'?'block':'none';
+  document.getElementById('fld-qty').style.display = mode==='memo'?'none':'block';
+  document.getElementById('fld-avg').style.display = mode==='memo'?'none':'block';
+  document.getElementById('fld-memo').style.display = (mode==='all'||mode==='memo')?'block':'none';
   document.getElementById('editMask').classList.add('show');
-  setTimeout(()=>document.getElementById(mode==='avg'?'edit-avg':'edit-qty').focus(),50);
+  const focusId = mode==='avg'?'edit-avg': mode==='memo'?'edit-memo':'edit-qty';
+  setTimeout(()=>document.getElementById(focusId).focus(),50);
 }
 function closeEdit(){document.getElementById('editMask').classList.remove('show');}
 async function submitEdit(){
