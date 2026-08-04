@@ -76,6 +76,7 @@
   .memo-add:hover{color:var(--accent);border-color:var(--accent)}
   table.holdings{table-layout:fixed}
   .memo-cell{color:var(--muted)}
+  .div-date{color:var(--muted);font-size:.86em}
   .nocode{display:inline-block;font-size:11px;font-weight:800;color:var(--warn);background:var(--warn-soft);
     border:1px solid #f0dcb4;border-radius:6px;padding:1px 7px;margin-left:6px;cursor:pointer}
   .editable{cursor:pointer;border-bottom:1px dashed #c7cdd6}
@@ -140,8 +141,9 @@
     body.printing-today .tradeable{ border-bottom:none !important; color:var(--ink) !important; }
     body.printing-today .memo-add{ display:none !important; }
     body.printing-today #printBar{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
-      border-bottom:1.5px solid #1a2332; padding-bottom:3px; margin-bottom:6px; }
+      border-bottom:1.5px solid #1a2332; padding-bottom:4px; margin-bottom:14px; }
     body.printing-today .pb-title{ font-size:13px; font-weight:800; }
+    body.printing-today .pb-date{ font-size:11.5px; font-weight:700; color:#1a2332; }
     body.printing-today .pb-idxwrap{ display:flex; gap:10px; flex-wrap:wrap; }
     body.printing-today .pb-idx{ font-size:9px; color:#5f6875; }
     body.printing-today .pb-idx b{ color:#1a2332; }
@@ -151,7 +153,7 @@
     body.printing-today .acc-head{ padding:2px 8px; break-after:avoid; page-break-after:avoid; }
     body.printing-today .acc-head .left b{ font-size:11px; }
     body.printing-today .acc-head .left .desc{ font-size:8.5px; }
-    body.printing-today .acc-head .left .num{ display:none; }
+    body.printing-today .acc-head .left .num{ display:inline; font-size:8.5px; color:#5f6875; }
     body.printing-today .acc-head .right .r-lbl{ display:none; }
     body.printing-today .acc-head .right .r-val{ font-size:11px; }
     body.printing-today table{ font-size:9.2px; }
@@ -179,7 +181,10 @@
   @media print{
     body.printing-returns .wrap{ display:none !important; }
     body.printing-returns #printReturnsArea{ display:block !important; }
-    #printReturnsArea .rt-print-head{ display:block; font-size:14px; font-weight:800; margin-bottom:6px; }
+    #printReturnsArea .rt-print-head{ display:flex; align-items:baseline; justify-content:space-between;
+      gap:10px; font-size:14px; font-weight:800; border-bottom:1.5px solid #1a2332;
+      padding-bottom:4px; margin-bottom:14px; }
+    #printReturnsArea .rt-print-date{ font-size:11.5px; font-weight:700; color:#1a2332; }
     #printReturnsArea .rtable{ font-size:8px; width:100%; border-collapse:collapse; }
     #printReturnsArea .rtable th{ background:#fafbfc; color:#5f6875; font-size:7.5px; }
     #printReturnsArea .rtable th, #printReturnsArea .rtable td{ padding:1px 3px; border-bottom:0.4px solid #e3e7ee; text-align:right; white-space:nowrap; }
@@ -385,6 +390,32 @@ const pct = n => (n==null? '–' : (n>0?'+':'')+n.toFixed(2)+'%');
 const cls = n => (n==null?'flat': n>0?'up': n<0?'down':'flat');
 const price = n => (n==null? '–' : Number(n).toLocaleString('ko-KR'));
 
+/* 오늘 날짜 + 요일 (인쇄 머리글용) */
+function todayLabel(){
+  const d = new Date();
+  const w = ['일','월','화','수','목','금','토'][d.getDay()];
+  return `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일 (${w}요일)`;
+}
+
+/* 이 종목의 가장 최근 배당 (날짜 + 금액). 없으면 null */
+function lastDividend(accName, stockName){
+  let best = null;
+  for(const d of (STATE.배당기록||[])){
+    if(d.계좌명!==accName || d.종목명!==stockName || !d.날짜) continue;
+    if(!best || d.날짜 > best.날짜) best = d;
+  }
+  return best;
+}
+/* 최근 배당 칸 내용: '07/15 12,000원' */
+function lastDivCell(accName, stockName){
+  const d = lastDividend(accName, stockName);
+  if(!d) return '<span class="muted-cell">–</span>';
+  const [y,m,dd] = d.날짜.split('-');
+  const thisYear = String(new Date().getFullYear());
+  const day = (y===thisYear) ? `${m}/${dd}` : `${y.slice(2)}/${m}/${dd}`;
+  return `<span class="div-date">${day}</span> <b>${won(+d.금액)}</b>`;
+}
+
 async function loadAll(){
   const r = await fetch('/api/data'); STATE = await r.json();
   document.getElementById('updated').textContent = STATE.업데이트시각;
@@ -411,6 +442,7 @@ function renderSummary(){
   const seg = (nm,v)=>`<span class="pb-idx">${nm} <b>${v.오늘==null?'–':Number(v.오늘).toLocaleString('ko-KR',{maximumFractionDigits:2})}</b> <span class="${cls(v.등락률)}">${pct(v.등락률)}</span></span>`;
   document.getElementById('printBar').innerHTML =
     `<span class="pb-title">ETF 자산 현황판</span>`
+    + `<span class="pb-date">${todayLabel()}</span>`
     + `<span class="pb-idxwrap">${seg('코스피',idx['코스피'])}${seg('코스닥',idx['코스닥'])}${seg('나스닥',idx['나스닥'])}${seg('S&P500',idx['S&P500'])}</span>`
     + `<span class="pb-total">총 <b>${won(STATE.총평가금액)}</b> · 수익률 <b class="${cls(STATE.총수익률)}">${pct(STATE.총수익률)}</b></span>`;
 }
@@ -432,7 +464,7 @@ function renderToday(){
         <td><b>${price(h.오늘종가)}</b></td>
         <td class="${cls(h.어제수익률)}">${pct(h.어제수익률)}</td>
         <td class="${cls(h.오늘수익률)}"><b>${pct(h.오늘수익률)}</b></td>
-        <td>${won(h.평가금액)}</td>
+        <td>${lastDivCell(acc.계좌명, h.종목명)}</td>
         <td class="${cls(h.평가손익)}">${h.평가손익!=null?won(h.평가손익):'–'}</td>
       </tr>`;
     }
@@ -443,10 +475,10 @@ function renderToday(){
           <div class="r-val ${cls(acc.수익률)}">${pct(acc.수익률)} <span style="color:var(--ink);font-size:15px">· ${won(acc.평가금액합)}</span></div></div>
       </div>
       <div class="tblwrap"><table class="holdings">
-        <colgroup><col style="width:32%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%">
-          <col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%"></colgroup>
+        <colgroup><col style="width:30%"><col style="width:7.5%"><col style="width:8.5%"><col style="width:8.5%">
+          <col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:11.5%"><col style="width:8.5%"></colgroup>
         <thead><tr><th class="name">종목</th><th>수량</th><th>평단가</th><th>어제종가</th><th>오늘종가</th>
-          <th>어제수익률</th><th>오늘수익률</th><th>평가금액</th><th>평가손익</th></tr></thead>
+          <th>어제수익률</th><th>오늘수익률</th><th>최근 배당</th><th>평가손익</th></tr></thead>
         <tbody>${rows}</tbody></table></div></div>`;
   }
 }
@@ -654,7 +686,8 @@ function printReturns(){
   if(!dates.length){ alert('아직 기록된 수익률이 없습니다. 며칠 사용하면 표가 채워집니다.'); return; }
   if(dates.length>12){ alert('날짜가 많습니다. 인쇄 창에서 용지 방향을 ‘가로’로, 배율을 ‘용지에 맞춤’으로 하면 한 장에 잘 담깁니다.'); }
   const area=document.getElementById('printReturnsArea');
-  area.innerHTML=`<div class="rt-print-head">${title} · 일별 수익률표</div>`+returnsTableHTML(accName);
+  area.innerHTML=`<div class="rt-print-head"><span>${title} · 일별 수익률표</span>`
+    + `<span class="rt-print-date">${todayLabel()}</span></div>`+returnsTableHTML(accName);
   document.body.classList.add('printing-returns');
   setTimeout(()=>{ window.print(); document.body.classList.remove('printing-returns'); area.innerHTML=''; }, 150);
 }
