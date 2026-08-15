@@ -275,6 +275,14 @@ def api_data():
     grand_eval = 0.0
     grand_cost = 0.0
     name_changed = False  # 정식명으로 바뀐 게 있으면 파일 저장
+
+    # 배당금 표시는 '현재 수량'이 아니라 '그 배당이 배당기록에 기록됐을 때의 수량' 기준으로 고정한다.
+    # (계좌명, 종목명, 날짜) -> 그때 저장된 금액
+    dividend_amount_by_key = {
+        (r.get("계좌명"), r.get("종목명"), r.get("날짜")): r.get("금액")
+        for r in data.get("배당기록", [])
+    }
+
     for acc in data["계좌"]:
         rows = []
         acc_eval = 0.0
@@ -327,7 +335,13 @@ def api_data():
             if div_override is not None:
                 div_per_share = div_override
 
-            div_amt = round(div_per_share * qty) if (div_per_share is not None and qty) else None
+            # 배당기록에 이미 고정된 금액이 있으면 그 값을 그대로 쓰고(수량이 나중에 바뀌어도 불변),
+            # 아직 기록되지 않았을 때만(수정값 사용 중이거나 신규 배당 감지 전) 현재 수량으로 잠정 계산한다.
+            div_amt = None
+            if div_override is None and div_date is not None:
+                div_amt = dividend_amount_by_key.get((acc["계좌명"], h["종목명"], div_date))
+            if div_amt is None and div_per_share is not None and qty:
+                div_amt = round(div_per_share * qty)
 
             rows.append({
                 "종목명": h["종목명"],
