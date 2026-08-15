@@ -471,11 +471,11 @@ function renderToday(){
           <div class="r-val ${cls(acc.수익률)}">${pct(acc.수익률)} <span style="color:var(--ink);font-size:15px">· ${won(acc.평가금액합)} · ${won(acc.이번달배당금)}</span></div></div>
       </div>
       <div class="tblwrap"><table class="holdings">
-        <colgroup><col style="width:24%"><col style="width:7%"><col style="width:9%">
-          <col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:9%">
-          <col style="width:9%"><col style="width:9%"><col style="width:9%"></colgroup>
+        <colgroup><col style="width:38%"><col style="width:5%"><col style="width:7%">
+          <col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:6%">
+          <col style="width:7%"><col style="width:9%"><col style="width:9%"></colgroup>
         <thead><tr><th class="name">종목</th><th>수량</th><th>평단가</th><th>종가</th>
-          <th>수익률</th><th>배당일자</th><th>1주당 배당금</th><th>배당금</th><th>평가금액</th><th>평가손익</th></tr></thead>
+          <th>수익률</th><th>배당일자</th><th>배당/주</th><th>배당금</th><th>평가금액</th><th>평가손익</th></tr></thead>
         <tbody>${rows}</tbody></table></div></div>`;
   }
 }
