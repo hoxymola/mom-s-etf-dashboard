@@ -18,7 +18,7 @@ if errorlevel 1 (
 
 REM install libraries (first run only)
 echo Installing required libraries (first time only)...
-pip install -q flask finance-datareader
+pip install -q -r requirements.txt
 
 REM run
 echo.
