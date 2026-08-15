@@ -16,6 +16,8 @@ from flask import Flask, jsonify, request, render_template
 
 # 시세 조회 라이브러리
 import FinanceDataReader as fdr
+# 배당(분배금) 이력 조회 라이브러리 (한국 ETF는 코드 뒤에 .KS를 붙여 조회)
+import yfinance as yf
 
 # 시세 소스 한 곳이 느리거나 막혀 있어도 화면이 멈추지 않도록,
 # 모든 조회를 이 시간(초) 안에 끝내고 안 되면 포기합니다.
@@ -110,6 +112,46 @@ def get_stock_close(code):
             result = (None, float(closes[-1]))
 
     _price_cache[code] = result
+    return result
+
+
+# 하루 동안 같은 배당(분배금) 이력을 반복 조회하지 않도록 메모리에 잠깐 저장해 둡니다.
+_dividend_cache = {}
+_dividend_cache_date = None
+
+
+def _reset_dividend_cache_if_new_day():
+    global _dividend_cache_date, _dividend_cache
+    today = dt.date.today()
+    if _dividend_cache_date != today:
+        _dividend_cache = {}
+        _dividend_cache_date = today
+
+
+def get_dividend_history(code):
+    """종목코드의 배당(분배금) 이력을 {배당락일: 1주당 금액} 형태로 돌려줍니다.
+    실패하거나 이력이 없으면 빈 dict. (yfinance는 API 키가 필요 없지만,
+    일부 최근 상장 종목은 이력이 비어 있을 수 있습니다.)"""
+    _reset_dividend_cache_if_new_day()
+    if not code:
+        return {}
+    if code in _dividend_cache:
+        return _dividend_cache[code]
+
+    box = {}
+
+    def _job():
+        try:
+            div = yf.Ticker(code + ".KS").dividends
+            box["div"] = {ts.date(): float(v) for ts, v in div.items()}
+        except Exception as e:
+            print(f"[배당 조회 실패] {code}: {type(e).__name__}")
+
+    th = threading.Thread(target=_job, daemon=True)
+    th.start()
+    th.join(FETCH_TIMEOUT)
+    result = box.get("div", {})
+    _dividend_cache[code] = result
     return result
 
 
@@ -269,6 +311,24 @@ def api_data():
                     acc_eval += eval_amt
                     acc_cost += avg * qty
 
+            # 가장 최근 1주당 배당금(분배금)·배당일자, 및 보유 수량 기준 배당금
+            # 조회값이 실제와 다를 때를 대비해, 사용자가 '주당배당금수정'을 직접 입력해 두면
+            # 조회값 대신 그 값을 우선 사용한다. (초기화하면 다시 조회값을 씀)
+            div_date = None
+            div_per_share = None
+            if code:
+                div_hist = get_dividend_history(code)
+                if div_hist:
+                    last_ex_date = max(div_hist)
+                    div_date = last_ex_date.strftime("%Y-%m-%d")
+                    div_per_share = round(div_hist[last_ex_date])
+
+            div_override = h.get("주당배당금수정")
+            if div_override is not None:
+                div_per_share = div_override
+
+            div_amt = round(div_per_share * qty) if (div_per_share is not None and qty) else None
+
             rows.append({
                 "종목명": h["종목명"],
                 "종목코드": code,
@@ -278,6 +338,10 @@ def api_data():
                 "오늘종가": t_close,
                 "어제수익률": ret(y_close),
                 "오늘수익률": ret(t_close),
+                "배당일자": div_date,
+                "주당배당금": div_per_share,
+                "주당배당금수정": div_override,
+                "배당금": div_amt,
                 "평가금액": round(eval_amt) if eval_amt is not None else None,
                 "평가손익": round(profit) if profit is not None else None,
                 "메모": h.get("메모", ""),
@@ -314,9 +378,22 @@ def api_data():
     # 오늘 종목별 수익률을 자동 기록 (그날 마지막 값으로 갱신)
     snapshot_changed = _record_snapshot(data, payload)
 
-    # 이름 변경/스냅샷 변경이 있으면 저장
-    if name_changed or snapshot_changed:
+    # 아직 기록되지 않은 새 배당(분배금)이 있으면 자동으로 배당기록에 추가
+    dividend_changed = _check_new_dividends(data)
+
+    # 이름 변경/스냅샷 변경/배당 자동기록이 있으면 저장
+    if name_changed or snapshot_changed or dividend_changed:
         save_data(data)
+
+    # 계좌별 '이번 달' 받은 배당금 합계 (방금 자동 기록된 배당까지 포함)
+    this_month = dt.date.today().strftime("%Y-%m")
+    month_total_by_acc = {}
+    for rec in data.get("배당기록", []):
+        if (rec.get("날짜") or "").startswith(this_month):
+            acc_name = rec.get("계좌명")
+            month_total_by_acc[acc_name] = month_total_by_acc.get(acc_name, 0) + (rec.get("금액") or 0)
+    for acc in account_out:
+        acc["이번달배당금"] = round(month_total_by_acc.get(acc["계좌명"], 0))
 
     payload["수익률스냅샷"] = data.get("수익률스냅샷", {})
     return jsonify(payload)
@@ -356,6 +433,61 @@ def _record_snapshot(data, payload):
     snaps[today] = day  # 그날 마지막 값으로 갱신
     data["수익률스냅샷"] = snaps
     return True
+
+
+def _check_new_dividends(data):
+    """각 보유 종목의 배당(분배금) 이력을 조회해서, 아직 기록되지 않은 새 배당이 있으면
+    '배당기록'에 자동으로 추가합니다. 종목별로 이미 기록된 가장 최근 날짜 이후의 배당만
+    새로 추가하므로, 과거에 직접 입력해 둔 기록은 건드리지 않습니다.
+    날짜는 배당락일(yfinance 기준) 기준이라 실제 입금일과 며칠 차이 날 수 있습니다.
+    반환: 새로 추가된 게 있으면 True"""
+    changed = False
+    records = data.setdefault("배당기록", [])
+    existing = {(r.get("계좌명"), r.get("종목명"), r.get("날짜")) for r in records}
+
+    latest_recorded = {}
+    for r in records:
+        key = (r.get("계좌명"), r.get("종목명"))
+        d = r.get("날짜")
+        if d and (key not in latest_recorded or d > latest_recorded[key]):
+            latest_recorded[key] = d
+
+    for acc in data["계좌"]:
+        for h in acc["종목"]:
+            code = (h.get("종목코드") or "").strip()
+            qty = h.get("수량") or 0
+            if not code or not qty:
+                continue
+            div_hist = get_dividend_history(code)
+            if not div_hist:
+                continue
+            key = (acc["계좌명"], h["종목명"])
+            baseline = latest_recorded.get(key)
+            if baseline is None:
+                # 이 종목은 배당기록이 한 번도 없었던 경우: 과거 이력을 몰아서 채우면
+                # (수량이 그때그때 달랐을 수 있어) 부정확하므로, 가장 최근 배당 1건만
+                # 추가해 그 시점부터 추적을 시작한다.
+                events = sorted(div_hist.items())[-1:]
+            else:
+                events = [(d, v) for d, v in sorted(div_hist.items())
+                          if d.strftime("%Y-%m-%d") > baseline]
+            for ex_date, per_share in events:
+                date_str = ex_date.strftime("%Y-%m-%d")
+                if (acc["계좌명"], h["종목명"], date_str) in existing:
+                    continue
+                records.append({
+                    "날짜": date_str,
+                    "계좌명": acc["계좌명"],
+                    "종목명": h["종목명"],
+                    "금액": round(per_share * qty),
+                    "주당분배금": round(per_share),
+                    "메모": "자동조회(배당락일 기준)",
+                })
+                existing.add((acc["계좌명"], h["종목명"], date_str))
+                latest_recorded[key] = date_str
+                changed = True
+
+    return changed
 
 
 def _is_market_open_today():
@@ -399,6 +531,11 @@ def api_update_holding():
                     _price_cache.pop(h["종목코드"], None)
                 if "메모" in body:
                     h["메모"] = body["메모"]
+                if "주당배당금수정" in body:
+                    if body["주당배당금수정"] is None:
+                        h.pop("주당배당금수정", None)  # 초기화 -> 조회값으로 되돌림
+                    else:
+                        h["주당배당금수정"] = body["주당배당금수정"]
                 if body.get("새종목명"):
                     h["종목명"] = body["새종목명"]
                 save_data(data)
