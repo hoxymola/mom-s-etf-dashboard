@@ -524,6 +524,87 @@ def _is_market_open_today():
     return False
 
 
+@app.route("/api/account/add", methods=["POST"])
+def api_add_account():
+    """새 계좌를 추가합니다."""
+    body = request.get_json(force=True)
+    data = load_data()
+    name = (body.get("계좌명") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "계좌 이름을 넣어 주세요."}), 400
+    if any(acc["계좌명"] == name for acc in data["계좌"]):
+        return jsonify({"ok": False, "error": "이미 있는 계좌 이름입니다."}), 400
+    data["계좌"].append({
+        "계좌명": name,
+        "계좌번호": (body.get("계좌번호") or "").strip(),
+        "설명": body.get("설명", ""),
+        "종목": [],
+    })
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/update", methods=["POST"])
+def api_update_account():
+    """계좌 이름/번호/설명을 수정합니다. 이름을 바꾸면 배당기록·수익률스냅샷의
+    계좌명도 함께 바꿔서 기존 기록이 새 이름으로 계속 이어지게 합니다."""
+    body = request.get_json(force=True)
+    data = load_data()
+    old_name = body.get("계좌명")
+    target = next((acc for acc in data["계좌"] if acc["계좌명"] == old_name), None)
+    if target is None:
+        return jsonify({"ok": False, "error": "계좌를 찾지 못했습니다."}), 404
+
+    new_name = (body.get("새계좌명") or "").strip()
+    if new_name and new_name != old_name:
+        if any(acc["계좌명"] == new_name for acc in data["계좌"]):
+            return jsonify({"ok": False, "error": "이미 있는 계좌 이름입니다."}), 400
+        for rec in data.get("배당기록", []):
+            if rec.get("계좌명") == old_name:
+                rec["계좌명"] = new_name
+        for day in data.get("수익률스냅샷", {}).values():
+            acc_map = day.get("계좌", {})
+            if old_name in acc_map:
+                acc_map[new_name] = acc_map.pop(old_name)
+            stock_map = day.get("종목", {})
+            prefix = old_name + "||"
+            for key in list(stock_map.keys()):
+                if key.startswith(prefix):
+                    stock_map[new_name + "||" + key[len(prefix):]] = stock_map.pop(key)
+        target["계좌명"] = new_name
+
+    if "계좌번호" in body:
+        target["계좌번호"] = (body["계좌번호"] or "").strip()
+    if "설명" in body:
+        target["설명"] = body["설명"] or ""
+
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/delete", methods=["POST"])
+def api_delete_account():
+    """계좌를 삭제합니다. 그 계좌에 속한 종목·배당기록·수익률스냅샷도 함께 정리합니다."""
+    body = request.get_json(force=True)
+    data = load_data()
+    name = body.get("계좌명")
+    if not any(acc["계좌명"] == name for acc in data["계좌"]):
+        return jsonify({"ok": False, "error": "계좌를 찾지 못했습니다."}), 404
+
+    data["계좌"] = [acc for acc in data["계좌"] if acc["계좌명"] != name]
+    data["배당기록"] = [r for r in data.get("배당기록", []) if r.get("계좌명") != name]
+    for day in data.get("수익률스냅샷", {}).values():
+        day.get("계좌", {}).pop(name, None)
+        prefix = name + "||"
+        stock_map = day.get("종목", {})
+        for key in list(stock_map.keys()):
+            if key.startswith(prefix):
+                stock_map.pop(key, None)
+
+    save_data(data)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/holding", methods=["POST"])
 def api_update_holding():
     """한 종목의 수량/평단/코드/메모를 수정합니다. (추가매수·매도 반영)"""

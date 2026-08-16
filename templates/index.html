@@ -280,6 +280,14 @@
 
   <!-- 종목 관리 -->
   <section id="tab-manage" class="hide">
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 style="font-size:16px">계좌 관리</h3>
+        <button class="btn primary mini" onclick="openAccAdd()">＋ 계좌 추가</button>
+      </div>
+      <div class="hint" style="margin-bottom:0">계좌 이름을 바꿔도 그동안의 배당 기록·수익률 그래프는 그대로 이어집니다. 계좌를 <b>삭제</b>하면 그 안의 종목·배당 기록도 함께 지워지니 신중하게 눌러 주세요.</div>
+      <div id="accManageList"></div>
+    </div>
     <div class="card">
       <div class="hint warn"><b>종목코드</b>가 비어 있으면 시세가 안 나옵니다. 종목의 <b>“코드 없음”</b>을 누르면 이름으로 코드를 찾아 넣을 수 있어요. (인터넷 연결 필요)</div>
       <div class="hint">종목을 <b>드래그</b>해서 순서를 바꿀 수 있어요. 계좌마다 <b>“＋ 종목 추가”</b>로 새 종목을 넣고, <b>“삭제”</b>로 뺄 수 있습니다.</div>
@@ -366,6 +374,20 @@
   </div>
 </div>
 
+<!-- 계좌 추가/수정 모달 -->
+<div class="mask" id="accMask">
+  <div class="modal">
+    <h3 id="acc-title">계좌 추가</h3>
+    <div class="field"><label>계좌 이름</label><input id="acc-name" placeholder="예: 일반계좌"></div>
+    <div class="field"><label>계좌번호</label><input id="acc-num" placeholder="선택 입력"></div>
+    <div class="field"><label>설명</label><input id="acc-desc" placeholder="선택 입력"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeAcc()">취소</button>
+      <button class="btn primary" onclick="submitAcc()">저장</button>
+    </div>
+  </div>
+</div>
+
 <!-- 종목 추가 모달 -->
 <div class="mask" id="addMask">
   <div class="modal">
@@ -414,7 +436,7 @@ function dateShort(s){
 async function loadAll(){
   const r = await fetch('/api/data'); STATE = await r.json();
   document.getElementById('updated').textContent = STATE.업데이트시각;
-  renderIndex(); renderSummary(); renderToday(); renderDiv(); renderChart(); renderManage();
+  renderIndex(); renderSummary(); renderToday(); renderDiv(); renderChart(); renderManage(); renderAccManage();
 }
 
 function renderIndex(){
@@ -587,10 +609,14 @@ function onPeriodChange(){
 }
 function ensureChartAccOptions(){
   const sel=document.getElementById('chartAcc');
-  if(sel.dataset.filled) return;
+  const names=STATE.계좌.map(a=>a.계좌명);
+  const key=JSON.stringify(names);
+  if(sel.dataset.namesKey===key) return;
+  const prev=sel.value;
   sel.innerHTML='<option value="__ALL__">전체 계좌</option>'
-    + STATE.계좌.map((a,i)=>`<option value="${a.계좌명}"${i===0?' selected':''}>${a.계좌명}</option>`).join('');
-  sel.dataset.filled='1';
+    + names.map((n,i)=>`<option value="${n}"${(!prev&&i===0)?' selected':''}>${n}</option>`).join('');
+  if(prev && (prev==='__ALL__' || names.includes(prev))) sel.value=prev;
+  sel.dataset.namesKey=key;
 }
 
 function renderChart(){
@@ -687,6 +713,69 @@ function printReturns(){
     + `<span class="rt-print-date">${todayLabel()}</span></div>`+returnsTableHTML(accName);
   document.body.classList.add('printing-returns');
   setTimeout(()=>{ window.print(); document.body.classList.remove('printing-returns'); area.innerHTML=''; }, 150);
+}
+
+/* ---------- 계좌 관리 ---------- */
+function renderAccManage(){
+  const box=document.getElementById('accManageList');
+  let rows='';
+  for(const acc of STATE.계좌){
+    rows+=`<tr>
+      <td class="name"><b>${acc.계좌명}</b></td>
+      <td class="name">${acc.계좌번호? acc.계좌번호 : '<span class="muted-cell">미입력</span>'}</td>
+      <td class="name">${acc.설명? acc.설명 : '<span class="muted-cell">미입력</span>'}</td>
+      <td style="white-space:nowrap">
+        <button class="btn mini" onclick="openAccEdit('${esc(acc.계좌명)}')">수정</button>
+        <button class="btn mini danger" onclick="delAccount('${esc(acc.계좌명)}')">삭제</button></td>
+    </tr>`;
+  }
+  box.innerHTML=`<div class="tblwrap"><table><thead><tr>
+      <th class="name">계좌명</th><th class="name">계좌번호</th><th class="name">설명</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
+let accCtx=null; // null=추가, 문자열=수정 대상(원래 계좌명)
+function openAccAdd(){
+  accCtx=null;
+  document.getElementById('acc-title').textContent='계좌 추가';
+  document.getElementById('acc-name').value='';
+  document.getElementById('acc-num').value='';
+  document.getElementById('acc-desc').value='';
+  document.getElementById('accMask').classList.add('show');
+  setTimeout(()=>document.getElementById('acc-name').focus(),50);
+}
+function openAccEdit(name){
+  const acc=STATE.계좌.find(a=>a.계좌명===name);
+  if(!acc) return;
+  accCtx=name;
+  document.getElementById('acc-title').textContent='계좌 수정';
+  document.getElementById('acc-name').value=acc.계좌명;
+  document.getElementById('acc-num').value=acc.계좌번호||'';
+  document.getElementById('acc-desc').value=acc.설명||'';
+  document.getElementById('accMask').classList.add('show');
+  setTimeout(()=>document.getElementById('acc-name').focus(),50);
+}
+function closeAcc(){document.getElementById('accMask').classList.remove('show');}
+async function submitAcc(){
+  const name=val('acc-name').trim();
+  if(!name){alert('계좌 이름을 넣어 주세요.');return;}
+  if(accCtx==null){
+    const r=await post('/api/account/add',{계좌명:name,계좌번호:val('acc-num').trim(),설명:val('acc-desc')});
+    if(!r.ok){alert(r.error||'추가 실패');return;}
+  }else{
+    const r=await post('/api/account/update',{계좌명:accCtx,새계좌명:name,계좌번호:val('acc-num').trim(),설명:val('acc-desc')});
+    if(!r.ok){alert(r.error||'수정 실패');return;}
+  }
+  closeAcc(); loadAll();
+}
+async function delAccount(name){
+  const acc=STATE.계좌.find(a=>a.계좌명===name);
+  const cnt=acc? acc.종목.length : 0;
+  const msg=cnt>0
+    ? `'${name}' 계좌를 삭제할까요?\n보유 중인 종목 ${cnt}개와 관련 배당 기록도 함께 삭제됩니다.`
+    : `'${name}' 계좌를 삭제할까요?`;
+  if(!confirm(msg)) return;
+  await post('/api/account/delete',{계좌명:name}); loadAll();
 }
 
 /* ---------- 종목 관리 ---------- */
