@@ -290,6 +290,7 @@
     </div>
     <div class="card">
       <div class="hint warn"><b>종목코드</b>가 비어 있으면 시세가 안 나옵니다. 종목의 <b>“코드 없음”</b>을 누르면 이름으로 코드를 찾아 넣을 수 있어요. (인터넷 연결 필요)</div>
+      <div class="hint">ETF뿐 아니라 <b>개별주식</b>(삼성전자·에코프로 등)도 이름으로 검색해 넣을 수 있습니다.</div>
       <div class="hint">종목을 <b>드래그</b>해서 순서를 바꿀 수 있어요. 계좌마다 <b>“＋ 종목 추가”</b>로 새 종목을 넣고, <b>“삭제”</b>로 뺄 수 있습니다.</div>
       <div id="manageList"></div>
     </div>
@@ -325,9 +326,9 @@
   <div class="modal">
     <h3>종목코드 찾기</h3>
     <p class="sub" id="code-sub"></p>
-    <div class="field"><label>이름으로 검색</label><input id="code-q" placeholder="예: 코리아밸류업"></div>
+    <div class="field"><label>이름으로 검색 (ETF·개별주식 모두)</label><input id="code-q" placeholder="예: 코리아밸류업, 삼성전자"></div>
     <button class="btn primary" onclick="doSearch()">검색</button>
-    <div class="field" style="margin-top:12px"><label>또는 코드 직접 입력 (6자리)</label><input id="code-direct" placeholder="379800"></div>
+    <div class="field" style="margin-top:12px"><label>또는 코드 직접 입력 (6자리, 예: 379800 · 0094M0)</label><input id="code-direct" placeholder="379800"></div>
     <div class="search-results hide" id="srBox"></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeCode()">취소</button>
@@ -395,12 +396,12 @@
     <p class="sub" id="add-sub"></p>
     <div class="field"><label>종목명 (이름 일부를 넣고 검색하면 코드가 자동으로 채워집니다)</label>
       <div style="display:flex;gap:6px">
-        <input id="add-name" placeholder="예: 코리아밸류업" style="flex:1">
+        <input id="add-name" placeholder="예: 코리아밸류업, 삼성전자" style="flex:1">
         <button class="btn" style="white-space:nowrap" onclick="doAddSearch()">검색</button>
       </div>
     </div>
     <div class="search-results hide" id="addSrBox"></div>
-    <div class="field"><label>종목코드 (6자리, 나중에 넣어도 됨)</label><input id="add-code" placeholder="379800"></div>
+    <div class="field"><label>종목코드 (6자리, 나중에 넣어도 됨)</label><input id="add-code" placeholder="379800 · 0094M0"></div>
     <div class="form-row">
       <div class="field" style="flex:1"><label>수량</label><input id="add-qty" type="number" placeholder="0"></div>
       <div class="field" style="flex:1"><label>평단가 (원)</label><input id="add-avg" type="number" step="0.01" placeholder="선택"></div>
@@ -849,7 +850,7 @@ async function doAddSearch(){
   const q=val('add-name');
   const box=document.getElementById('addSrBox');
   box.classList.remove('hide'); box.innerHTML='<div class="sr-item">검색 중…</div>';
-  const r=await fetch('/api/search_etf?q='+encodeURIComponent(q)); const j=await r.json();
+  const r=await fetch('/api/search_stock?q='+encodeURIComponent(q)); const j=await r.json();
   if(!j.ok){box.innerHTML=`<div class="sr-item">${j.error||'검색 실패 (인터넷 확인)'}</div>`;return;}
   if(!j.결과.length){box.innerHTML='<div class="sr-item">결과가 없습니다. 다른 단어로 검색해 보세요.</div>';return;}
   box.innerHTML=j.결과.map(x=>`<div class="sr-item" onclick="pickAddResult('${x.코드}','${esc(x.이름)}')"><span>${x.이름}</span><span class="code">${x.코드}</span></div>`).join('');
@@ -863,8 +864,10 @@ function closeAdd(){document.getElementById('addMask').classList.remove('show');
 async function submitAdd(){
   const nm=val('add-name').trim();
   if(!nm){alert('종목명을 넣어 주세요.');return;}
+  const code=val('add-code').trim().toUpperCase();
+  if(code && !CODE_RE.test(code)){alert(CODE_MSG+'\n\n모르면 비워 두고 나중에 넣어도 됩니다.');return;}
   await post('/api/holding/add',{계좌명:addAcc,종목명:nm,
-    종목코드:val('add-code').trim(),
+    종목코드:code,
     수량:+val('add-qty')||0,
     평단가:val('add-avg')===''?null:+val('add-avg')});
   closeAdd(); loadAll();
@@ -960,6 +963,9 @@ async function resetDivOverride(){
 }
 
 /* ---------- 코드 찾기 ---------- */
+// 종목코드는 6자리. 개별주식은 숫자뿐이지만(005930) 최근 상장 ETF는 영문이 섞인다(0094M0).
+const CODE_RE=/^[0-9A-Z]{6}$/;
+const CODE_MSG='6자리 종목코드를 넣어 주세요.\n· 숫자 6자리 (예: 379800, 005930)\n· 숫자+영문 6자리 (예: 0094M0)';
 let codeCtx=null;
 function openCode(acc,name){
   codeCtx={acc,name};
@@ -973,15 +979,15 @@ function closeCode(){document.getElementById('codeMask').classList.remove('show'
 async function doSearch(){
   const q=document.getElementById('code-q').value;
   const box=document.getElementById('srBox'); box.classList.remove('hide'); box.innerHTML='<div class="sr-item">검색 중…</div>';
-  const r=await fetch('/api/search_etf?q='+encodeURIComponent(q)); const j=await r.json();
+  const r=await fetch('/api/search_stock?q='+encodeURIComponent(q)); const j=await r.json();
   if(!j.ok){box.innerHTML=`<div class="sr-item">${j.error||'검색 실패'}</div>`;return;}
   if(!j.결과.length){box.innerHTML='<div class="sr-item">결과가 없습니다. 다른 단어로 검색해 보세요.</div>';return;}
   box.innerHTML=j.결과.map(x=>`<div class="sr-item" onclick="pickCode('${x.코드}','${esc(x.이름)}')"><span>${x.이름}</span><span class="code">${x.코드}</span></div>`).join('');
 }
 async function pickCode(code,name){ await saveCode(code,name); }
 async function saveDirectCode(){
-  const c=document.getElementById('code-direct').value.trim();
-  if(!/^\d{6}$/.test(c)){alert('6자리 숫자 코드를 넣어 주세요.');return;}
+  const c=document.getElementById('code-direct').value.trim().toUpperCase();
+  if(!CODE_RE.test(c)){alert(CODE_MSG);return;}
   await saveCode(c,null);
 }
 async function saveCode(code,name){

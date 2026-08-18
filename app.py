@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-부모님 ETF 대시보드 - 로컬 전용 프로그램
-- 보유 종목의 종가와 수익률을 자동으로 채워 줍니다.
+부모님 자산 대시보드 - 로컬 전용 프로그램
+- 보유 종목(ETF·개별주식)의 종가와 수익률을 자동으로 채워 줍니다.
 - 코스피/코스닥/나스닥/S&P500 지수도 자동으로 가져옵니다.
 - 배당 기록과 수익률 추이 그래프를 볼 수 있습니다.
 - 인터넷에서 '가격만' 읽어올 뿐, 거래 기능은 전혀 없습니다.
@@ -9,6 +9,7 @@
 
 import os
 import json
+import logging
 import datetime as dt
 import threading
 
@@ -16,8 +17,14 @@ from flask import Flask, jsonify, request, render_template
 
 # 시세 조회 라이브러리
 import FinanceDataReader as fdr
-# 배당(분배금) 이력 조회 라이브러리 (한국 ETF는 코드 뒤에 .KS를 붙여 조회)
+# 배당(분배금) 이력 조회 라이브러리
+# (국내 종목은 코드 뒤에 시장 접미사를 붙여 조회 - 코스피 .KS / 코스닥 .KQ)
 import yfinance as yf
+
+# yfinance가 검은 창에 쏟아 내는 경고를 끕니다. ("Period 'max' is invalid",
+# "possibly delisted" 등) 부모님이 보시는 화면이라 놀라지 않게 조용히 두고,
+# 필요한 안내는 아래에서 우리 문장으로 직접 출력합니다.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 # 시세 소스 한 곳이 느리거나 막혀 있어도 화면이 멈추지 않도록,
 # 모든 조회를 이 시간(초) 안에 끝내고 안 되면 포기합니다.
@@ -94,7 +101,8 @@ def _reset_cache_if_new_day():
 
 
 def get_stock_close(code):
-    """국내 ETF의 (어제종가, 오늘종가)를 돌려줍니다. 실패하면 (None, None)."""
+    """국내 상장 종목(ETF·개별주식)의 (어제종가, 오늘종가)를 돌려줍니다.
+    실패하면 (None, None)."""
     _reset_cache_if_new_day()
     if not code:
         return None, None
@@ -139,13 +147,28 @@ def get_dividend_history(code):
         return _dividend_cache[code]
 
     box = {}
+    suffixes = _yf_suffixes(code)  # 스레드 밖에서 미리 정해 둔다 (목록 조회 포함)
 
     def _job():
-        try:
-            div = yf.Ticker(code + ".KS").dividends
-            box["div"] = {ts.date(): float(v) for ts, v in div.items()}
-        except Exception as e:
-            print(f"[배당 조회 실패] {code}: {type(e).__name__}")
+        unavailable = False  # 조회 자체가 안 된 경우 (배당이 없는 종목과 구분)
+        for suffix in suffixes:
+            # 조회가 실패하면 yfinance가 None을 주기도 하므로(빈 이력과 구분 안 됨)
+            # 변환까지 한 덩어리로 감싸 둔다. 여기서 예외가 새면 스레드가 죽는다.
+            try:
+                div = yf.Ticker(code + suffix).dividends
+                if div is None:
+                    unavailable = True
+                    continue
+                if not len(div):
+                    continue  # 배당이 없는 종목 -> 다음 접미사 시도
+                box["div"] = {ts.date(): float(v) for ts, v in div.items()}
+                return
+            except Exception as e:
+                unavailable = True
+                print(f"[배당 조회 실패] {code}{suffix}: {type(e).__name__}")
+        if unavailable:
+            print(f"[배당 자동조회 불가] {code} - 화면에서 '배당/주' 칸에 "
+                  f"1주당 배당금을 직접 넣어 주세요.")
 
     th = threading.Thread(target=_job, daemon=True)
     th.start()
@@ -155,45 +178,80 @@ def get_dividend_history(code):
     return result
 
 
-# 코드 -> 정식 종목명 사전 (하루 한 번만 만들어 캐시)
+# 코드 -> 정식 종목명 / 상장시장 사전 (하루 한 번만 만들어 캐시)
+# ETF와 개별주식(코스피·코스닥·코넥스)을 한 사전에 모아 둡니다.
 _name_map = {}
-_name_map_date = None
+_market_map = {}
+_listing_date = None
+
+# (조회할 목록, 그 목록에 Market 컬럼이 없을 때 대신 쓸 시장 이름)
+# ETF/KR 목록에는 시장 컬럼이 없지만 국내 ETF는 코스피 상장이라 .KS를 씁니다.
+LISTING_SOURCES = (("ETF/KR", "KOSPI"), ("KRX", None))
 
 
-def _ensure_name_map():
-    """국내 ETF 전체 목록을 받아 {코드: 정식명} 사전을 만듭니다. 하루 한 번만."""
-    global _name_map, _name_map_date
+def _ensure_listing():
+    """국내 ETF + 개별주식 전체 목록을 받아 {코드: 정식명}·{코드: 시장} 사전을
+    만듭니다. 하루 한 번만. (ETF 약 1,100개 + 주식 약 2,900개)"""
+    global _name_map, _market_map, _listing_date
     today = dt.date.today()
-    if _name_map_date == today and _name_map:
+    if _listing_date == today and _name_map:
         return
     box = {}
 
     def _job():
-        try:
-            etfs = fdr.StockListing("ETF/KR")
-            name_col = "Name" if "Name" in etfs.columns else etfs.columns[1]
-            code_col = "Symbol" if "Symbol" in etfs.columns else etfs.columns[0]
-            m = {}
-            for _, r in etfs.iterrows():
-                m[str(r[code_col]).zfill(6)] = str(r[name_col])
-            box["m"] = m
-        except Exception as e:
-            print(f"[종목명 목록 조회 실패] {type(e).__name__}")
+        names, markets = {}, {}
+        for source, default_market in LISTING_SOURCES:
+            try:
+                df = fdr.StockListing(source)
+            except Exception as e:
+                print(f"[종목 목록 조회 실패] {source}: {type(e).__name__}")
+                continue
+            # 컬럼명이 목록·버전에 따라 다를 수 있어 유연하게 처리
+            name_col = "Name" if "Name" in df.columns else df.columns[1]
+            code_col = next((c for c in ("Symbol", "Code") if c in df.columns), df.columns[0])
+            has_market = "Market" in df.columns
+            for _, r in df.iterrows():
+                code = str(r[code_col]).zfill(6)
+                names[code] = str(r[name_col])
+                markets[code] = str(r["Market"]) if has_market else default_market
+        if names:
+            box["names"], box["markets"] = names, markets
 
     th = threading.Thread(target=_job, daemon=True)
     th.start()
     th.join(FETCH_TIMEOUT)
-    if "m" in box and box["m"]:
-        _name_map = box["m"]
-        _name_map_date = today
+    if box.get("names"):
+        # 한 목록만 성공해도 그만큼은 쓴다. 둘 다 실패하면 어제 사전을 그대로 유지.
+        _name_map = box["names"]
+        _market_map = box["markets"]
+        _listing_date = today
+
+
+def norm_code(code):
+    """종목코드 표기 통일. 앞뒤 공백을 떼고 대문자로 맞춥니다.
+    (최근 상장 ETF 코드에는 영문이 섞여 있고 - 예: 0094M0 - 목록 사전은
+    대문자 기준이라, 소문자로 들어오면 이름·시장 조회가 어긋납니다.)"""
+    return (code or "").strip().upper()
 
 
 def official_name(code):
     """코드의 정식 종목명. 못 찾으면 None."""
     if not code:
         return None
-    _ensure_name_map()
-    return _name_map.get(str(code).zfill(6))
+    _ensure_listing()
+    return _name_map.get(norm_code(code).zfill(6))
+
+
+def _yf_suffixes(code):
+    """yfinance 티커에 붙일 접미사 후보. 코스닥(코스닥 글로벌 포함)은 .KQ,
+    코스피·ETF는 .KS. 시장을 못 찾으면(코넥스·목록 조회 실패 등) 둘 다 시도합니다."""
+    _ensure_listing()
+    market = (_market_map.get(norm_code(code).zfill(6)) or "").upper()
+    if "KOSDAQ" in market:
+        return (".KQ",)
+    if "KOSPI" in market:
+        return (".KS",)
+    return (".KS", ".KQ")
 
 
 def get_index(symbols):
@@ -622,7 +680,7 @@ def api_update_holding():
                 if "평단가" in body:
                     h["평단가"] = body["평단가"]
                 if "종목코드" in body:
-                    h["종목코드"] = (body["종목코드"] or "").strip()
+                    h["종목코드"] = norm_code(body["종목코드"])
                     _price_cache.pop(h["종목코드"], None)
                 if "메모" in body:
                     h["메모"] = body["메모"]
@@ -647,7 +705,7 @@ def api_add_holding():
         if acc["계좌명"] == body.get("계좌명"):
             acc["종목"].append({
                 "종목명": body.get("종목명", "새 종목"),
-                "종목코드": (body.get("종목코드") or "").strip(),
+                "종목코드": norm_code(body.get("종목코드")),
                 "수량": body.get("수량", 0),
                 "평단가": body.get("평단가"),
                 "메모": body.get("메모", ""),
@@ -749,27 +807,28 @@ def api_reorder():
     return jsonify({"ok": False}), 404
 
 
-@app.route("/api/search_etf")
-def api_search_etf():
-    """종목명 일부로 국내 ETF 코드를 찾아 줍니다. (부모님 PC에서 인터넷 연결 시 동작)"""
+@app.route("/api/search_stock")
+@app.route("/api/search_etf")  # 예전 주소 (호환용)
+def api_search_stock():
+    """종목명 일부로 국내 ETF·개별주식 코드를 찾아 줍니다.
+    (부모님 PC에서 인터넷 연결 시 동작)"""
     q = (request.args.get("q") or "").strip().lower().replace(" ", "")
     if not q:
         return jsonify({"ok": True, "결과": []})
-    try:
-        etfs = fdr.StockListing("ETF/KR")
-        # 컬럼명이 버전에 따라 다를 수 있어 유연하게 처리
-        name_col = "Name" if "Name" in etfs.columns else etfs.columns[1]
-        code_col = "Symbol" if "Symbol" in etfs.columns else etfs.columns[0]
-        hits = []
-        for _, r in etfs.iterrows():
-            nm = str(r[name_col])
-            if q in nm.lower().replace(" ", ""):
-                hits.append({"코드": str(r[code_col]), "이름": nm})
-            if len(hits) >= 15:
-                break
-        return jsonify({"ok": True, "결과": hits})
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"목록 조회 실패(인터넷 확인): {e}", "결과": []})
+    _ensure_listing()
+    if not _name_map:
+        return jsonify({"ok": False, "error": "목록 조회 실패(인터넷 확인)", "결과": []})
+
+    hits = []
+    for code, nm in _name_map.items():
+        flat = nm.lower().replace(" ", "")
+        if q in flat:
+            # 검색어로 시작하는 이름을 앞에, 그다음 이름이 짧은 것을 앞에 둔다.
+            # ('삼성전자'로 검색했을 때 '삼성전자'가 '삼성전자우'보다 위로 오도록)
+            hits.append((0 if flat.startswith(q) else 1, len(nm), nm, code))
+    hits.sort()
+    return jsonify({"ok": True,
+                    "결과": [{"코드": c, "이름": n} for _, _, n, c in hits[:15]]})
 
 
 @app.route("/api/dividend/add", methods=["POST"])
