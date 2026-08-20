@@ -8,6 +8,7 @@
 """
 
 import os
+import re
 import json
 import logging
 import datetime as dt
@@ -182,6 +183,9 @@ def get_dividend_history(code):
 # ETF와 개별주식(코스피·코스닥·코넥스)을 한 사전에 모아 둡니다.
 _name_map = {}
 _market_map = {}
+# ETF 목록의 Category 숫자 (1 국내지수 / 2 국내테마 / 3 국내파생 / 4 해외주식 /
+# 5 원자재 / 6 채권 / 7 혼합·기타). 섹터 자동분류의 마지막 폴백으로만 씁니다.
+_category_map = {}
 _listing_date = None
 
 # (조회할 목록, 그 목록에 Market 컬럼이 없을 때 대신 쓸 시장 이름)
@@ -192,14 +196,14 @@ LISTING_SOURCES = (("ETF/KR", "KOSPI"), ("KRX", None))
 def _ensure_listing():
     """국내 ETF + 개별주식 전체 목록을 받아 {코드: 정식명}·{코드: 시장} 사전을
     만듭니다. 하루 한 번만. (ETF 약 1,100개 + 주식 약 2,900개)"""
-    global _name_map, _market_map, _listing_date
+    global _name_map, _market_map, _category_map, _listing_date
     today = dt.date.today()
     if _listing_date == today and _name_map:
         return
     box = {}
 
     def _job():
-        names, markets = {}, {}
+        names, markets, categories = {}, {}, {}
         for source, default_market in LISTING_SOURCES:
             try:
                 df = fdr.StockListing(source)
@@ -210,12 +214,18 @@ def _ensure_listing():
             name_col = "Name" if "Name" in df.columns else df.columns[1]
             code_col = next((c for c in ("Symbol", "Code") if c in df.columns), df.columns[0])
             has_market = "Market" in df.columns
+            has_category = "Category" in df.columns
             for _, r in df.iterrows():
                 code = str(r[code_col]).zfill(6)
                 names[code] = str(r[name_col])
                 markets[code] = str(r["Market"]) if has_market else default_market
+                if has_category:
+                    try:
+                        categories[code] = int(r["Category"])
+                    except (TypeError, ValueError):
+                        pass
         if names:
-            box["names"], box["markets"] = names, markets
+            box["names"], box["markets"], box["categories"] = names, markets, categories
 
     th = threading.Thread(target=_job, daemon=True)
     th.start()
@@ -224,6 +234,7 @@ def _ensure_listing():
         # 한 목록만 성공해도 그만큼은 쓴다. 둘 다 실패하면 어제 사전을 그대로 유지.
         _name_map = box["names"]
         _market_map = box["markets"]
+        _category_map = box["categories"]
         _listing_date = today
 
 
@@ -242,6 +253,14 @@ def official_name(code):
     return _name_map.get(norm_code(code).zfill(6))
 
 
+def etf_category(code):
+    """ETF 목록에 적힌 Category 숫자. ETF가 아니거나 못 찾으면 None."""
+    if not code:
+        return None
+    _ensure_listing()
+    return _category_map.get(norm_code(code).zfill(6))
+
+
 def _yf_suffixes(code):
     """yfinance 티커에 붙일 접미사 후보. 코스닥(코스닥 글로벌 포함)은 .KQ,
     코스피·ETF는 .KS. 시장을 못 찾으면(코넥스·목록 조회 실패 등) 둘 다 시도합니다."""
@@ -252,6 +271,98 @@ def _yf_suffixes(code):
     if "KOSPI" in market:
         return (".KS",)
     return (".KS", ".KQ")
+
+
+# ----------------------------------------------------------------------
+# 섹터(테마) 분류
+# ----------------------------------------------------------------------
+# 종목코드만으로는 섹터를 알 수 없습니다. 국내 주식 목록(KRX)에는 업종 컬럼이
+# 아예 없고, ETF 목록(ETF/KR)의 Category는 '국내 업종·테마'처럼 뭉뚱그려져 있어
+# 반도체 ETF와 고배당 ETF가 같은 값(2)으로 들어옵니다.
+# 그래서 'ETF 이름에 테마가 그대로 적혀 있다'는 점을 이용해 이름으로 분류합니다.
+#
+# 위에서부터 먼저 걸리는 규칙이 이깁니다. 순서가 중요합니다 —
+#   '미국우주항공'은 미국지수보다 우주항공이 먼저 걸려야 하고,
+#   '금융고배당'은 원자재(금)가 아니라 배당·밸류로 가야 하고,
+#   '200헬스케어'는 국내지수('200')가 아니라 바이오·헬스로 가야 합니다.
+# 그래서 업종·테마 규칙이 모두 위에 있고, 넓게 걸리는 지수 규칙이 맨 아래입니다.
+# '은행·금융'에 '금융'을 넣지 않은 것도 같은 이유입니다 —
+# '금융고배당TOP10'을 은행 ETF로 잘못 끌어가지 않도록.
+# 자동 분류가 어색한 종목은 화면에서 섹터를 눌러 직접 지정할 수 있고,
+# 그 값(holdings.json의 '섹터')이 이 규칙보다 우선합니다.
+SECTOR_RULES = (
+    ("채권혼합", ("채권혼합", "밸런스", "미국채커버드콜", "미국채혼합", "국채혼합", "채권 혼합")),
+    ("채권", ("국채", "채권", "CD금리", "KOFR", "머니마켓", "통안채")),
+    ("원자재", ("국제금", "금현물", "금선물", "골드", "GOLD", "은현물", "은선물",
+                "은액티브", "실버", "SILVER", "원유", "구리", "농산물")),
+    ("우주항공", ("우주항공", "항공우주", "방산", "방위산업")),
+    ("원자력", ("원자력", "원전", "SMR")),
+    ("반도체", ("반도체", "삼성전자", "SK하이닉스", "하이닉스", "엔비디아", "마이크론")),
+    ("2차전지", ("2차전지", "이차전지", "배터리", "리튬", "에너지솔루션")),
+    ("자동차", ("자동차", "현대차", "기아", "전기차", "모빌리티")),
+    ("바이오·헬스", ("바이오", "헬스케어", "헬스", "제약", "의료기기", "의료")),
+    ("조선·해운", ("조선", "해운", "운송")),
+    ("은행·금융", ("은행", "보험", "증권")),
+    ("리츠·부동산", ("리츠", "부동산", "인프라")),
+    ("소비재", ("화장품", "음식료", "유통", "소비재", "필수소비")),
+    ("게임·엔터", ("게임", "엔터", "미디어", "콘텐츠")),
+    ("AI·빅테크", ("AI", "빅테크", "테크100", "테크10", "데이터센터", "광통신",
+                   "미국성장", "성장커버드콜", "테슬라", "애플", "M7", "빅7", "7+")),
+    ("미국지수", ("나스닥100", "S&P500", "미국500", "미국S&P", "미국주식", "미국시장")),
+    ("배당·밸류", ("고배당", "주주환원", "밸류업", "배당", "금융", "가치")),
+    ("국내지수", ("코스피", "코스닥", "코리아", "200")),
+)
+
+# 이름 규칙에 하나도 안 걸릴 때만 쓰는 폴백. ETF 목록의 Category 숫자입니다.
+ETF_CATEGORY_SECTOR = {
+    1: "국내지수", 2: "국내테마", 3: "국내파생",
+    4: "해외주식", 5: "원자재", 6: "채권", 7: "혼합·기타",
+}
+
+# 화면의 섹터 선택 목록 (직접 지정할 때 고르는 값)
+SECTOR_CHOICES = tuple(s for s, _ in SECTOR_RULES) + ("해외주식", "국내테마", "기타")
+
+
+def _kw_hit(name_up, kw_up):
+    """키워드가 종목명에 들어 있는지. 영문 약어(AI·GOLD 등)는 다른 영단어 속에
+    우연히 끼어 있는 경우를 걸러내려고 앞뒤가 영문자가 아닐 때만 인정합니다.
+    ('DAILY' 안의 'AI'를 AI 테마로 잘못 잡지 않도록)"""
+    if kw_up.isascii() and any(c.isalpha() for c in kw_up):
+        return re.search(r"(?<![A-Za-z])" + re.escape(kw_up) + r"(?![A-Za-z])", name_up) is not None
+    return kw_up in name_up
+
+
+def classify_sector(name, code=""):
+    """종목명 키워드로 섹터를 정합니다. 규칙에 안 걸리면 ETF 목록의 Category로
+    대분류를 매기고, 그것도 없으면 '기타'."""
+    name_up = (name or "").upper()
+    for sector, keywords in SECTOR_RULES:
+        for kw in keywords:
+            if _kw_hit(name_up, kw.upper()):
+                return sector
+    return ETF_CATEGORY_SECTOR.get(etf_category(code), "기타")
+
+
+def sector_options(rows):
+    """섹터 지정 창에 보여 줄 목록. 규칙에 있는 섹터 + 지금 실제로 쓰이고 있는 섹터.
+    직접 적어 넣은 이름도 한 번 쓰이면 다음부터 목록에 나옵니다."""
+    known = list(SECTOR_CHOICES)
+    extra = sorted({r["섹터"] for r in rows if r["섹터"] not in known})
+    return known + extra
+
+
+def sector_summary(rows, base_amount):
+    """종목 목록을 섹터별로 묶어 [{섹터, 평가금액, 비중, 종목수}] 를 만듭니다.
+    평가금액이 큰 섹터부터 정렬합니다."""
+    box = {}
+    for r in rows:
+        b = box.setdefault(r["섹터"], {"섹터": r["섹터"], "평가금액": 0, "종목수": 0})
+        b["평가금액"] += r.get("평가금액") or 0
+        b["종목수"] += 1
+    out = sorted(box.values(), key=lambda x: -x["평가금액"])
+    for b in out:
+        b["비중"] = round(b["평가금액"] / base_amount * 100, 1) if base_amount else None
+    return out
 
 
 def get_index(symbols):
@@ -332,6 +443,10 @@ def api_data():
     account_out = []
     grand_eval = 0.0
     grand_cost = 0.0
+    # 비중 계산용 합계. 위의 grand_eval 은 '평단가가 있는 종목'만 더하지만
+    # (수익률 기준이 없으면 빼야 하니까), 비중은 수익률과 무관하므로
+    # '평가금액이 있는 종목 전부'를 분모로 씁니다.
+    grand_eval_all = 0.0
     name_changed = False  # 정식명으로 바뀐 게 있으면 파일 저장
 
     # 배당금 표시는 '현재 수량'이 아니라 '그 배당이 배당기록에 기록됐을 때의 수량' 기준으로 고정한다.
@@ -345,6 +460,7 @@ def api_data():
         rows = []
         acc_eval = 0.0
         acc_cost = 0.0
+        acc_eval_all = 0.0
         for h in acc["종목"]:
             code = (h.get("종목코드") or "").strip()
             qty = h.get("수량") or 0
@@ -372,6 +488,7 @@ def api_data():
             profit = None
             if t_close is not None and qty:
                 eval_amt = t_close * qty
+                acc_eval_all += eval_amt
                 if avg:
                     profit = (t_close - avg) * qty
                     acc_eval += eval_amt
@@ -401,9 +518,15 @@ def api_data():
             if div_amt is None and div_per_share is not None and qty:
                 div_amt = round(div_per_share * qty)
 
+            # 섹터: 직접 지정한 값이 있으면 그것, 없으면 종목명으로 자동 분류
+            sector_manual = (h.get("섹터") or "").strip() or None
+            sector = sector_manual or classify_sector(h["종목명"], code)
+
             rows.append({
                 "종목명": h["종목명"],
                 "종목코드": code,
+                "섹터": sector,
+                "섹터수동": sector_manual,
                 "수량": qty,
                 "평단가": avg,
                 "어제종가": y_close,
@@ -424,6 +547,14 @@ def api_data():
             acc_ret = round((acc_eval - acc_cost) / acc_cost * 100, 2)
         grand_eval += acc_eval
         grand_cost += acc_cost
+        grand_eval_all += acc_eval_all
+
+        # 계좌 안에서의 비중
+        for r in rows:
+            amt = r.get("평가금액")
+            r["계좌내비중"] = (round(amt / acc_eval_all * 100, 1)
+                              if amt is not None and acc_eval_all else None)
+
         account_out.append({
             "계좌명": acc["계좌명"],
             "계좌번호": acc.get("계좌번호", ""),
@@ -431,11 +562,20 @@ def api_data():
             "종목": rows,
             "평가금액합": round(acc_eval) if acc_eval else 0,
             "수익률": acc_ret,
+            "비중기준금액": round(acc_eval_all),
+            "섹터집계": sector_summary(rows, acc_eval_all),
         })
 
     total_ret = None
     if grand_cost > 0:
         total_ret = round((grand_eval - grand_cost) / grand_cost * 100, 2)
+
+    # 전체 자산 대비 비중 + 전체 섹터 집계
+    all_rows = [r for acc in account_out for r in acc["종목"]]
+    for r in all_rows:
+        amt = r.get("평가금액")
+        r["전체비중"] = (round(amt / grand_eval_all * 100, 1)
+                        if amt is not None and grand_eval_all else None)
 
     payload = {
         "업데이트시각": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -444,6 +584,9 @@ def api_data():
         "계좌": account_out,
         "총평가금액": round(grand_eval) if grand_eval else 0,
         "총수익률": total_ret,
+        "비중기준금액": round(grand_eval_all),
+        "섹터집계": sector_summary(all_rows, grand_eval_all),
+        "섹터목록": sector_options(all_rows),
         "배당기록": data.get("배당기록", []),
     }
 
@@ -689,6 +832,11 @@ def api_update_holding():
                         h.pop("주당배당금수정", None)  # 초기화 -> 조회값으로 되돌림
                     else:
                         h["주당배당금수정"] = body["주당배당금수정"]
+                if "섹터" in body:
+                    if body["섹터"]:
+                        h["섹터"] = body["섹터"]
+                    else:
+                        h.pop("섹터", None)  # 초기화 -> 이름으로 자동 분류
                 if body.get("새종목명"):
                     h["종목명"] = body["새종목명"]
                 save_data(data)

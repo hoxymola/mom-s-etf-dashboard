@@ -43,6 +43,33 @@
   .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
   .btn.primary:hover{filter:brightness(1.06)}
 
+  /* 섹터 비중 요약 */
+  .sector-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:0 0 16px}
+  .sector-card .sc-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .sector-card .sc-head b{font-size:15px;font-weight:800}
+  .sector-card .sc-head .sc-base{font-size:12px;color:var(--muted)}
+  .sector-bar{display:flex;height:16px;border-radius:8px;overflow:hidden;background:#eef0f4}
+  .sector-bar span{display:block;height:100%}
+  .sector-legend{display:flex;flex-wrap:wrap;gap:5px 16px;margin-top:10px}
+  .sector-legend .sl{display:flex;align-items:center;gap:5px;font-size:13px;white-space:nowrap}
+  .sector-legend .dot{width:10px;height:10px;border-radius:3px;flex:none}
+  .sector-legend .sl-pct{font-weight:800}
+  .sector-legend .sl-amt{color:var(--muted);font-size:12px}
+  .acc-head .left .sectors{font-size:12px;color:var(--muted);margin-left:8px}
+
+  /* 섹터 태그 · 비중 · 정렬 */
+  .sec-tag{display:inline-block;font-size:11px;font-weight:800;padding:1px 7px;border-radius:6px;
+    cursor:pointer;white-space:nowrap;border:1px solid transparent}
+  .sec-tag:hover{border-color:rgba(0,0,0,.18)}
+  .sec-tag.manual::after{content:'✎';font-size:9px;margin-left:3px;opacity:.75}
+  .w-acc{font-weight:800}
+  .w-all{display:block;font-size:11px;color:var(--muted);font-weight:500;line-height:1.15}
+  th.sortable{cursor:pointer;user-select:none}
+  th.sortable:hover{color:var(--accent)}
+  th.sortable.on{color:var(--accent)}
+  th.sortable .arrow{font-size:9px;opacity:.4;margin-left:2px}
+  th.sortable.on .arrow{opacity:1}
+
   /* 탭 */
   .tabs{display:flex;gap:6px;border-bottom:2px solid var(--line);margin-bottom:16px;flex-wrap:wrap}
   .tab{padding:10px 18px;font-size:16px;font-weight:700;color:var(--muted);cursor:pointer;
@@ -108,6 +135,8 @@
   .field label{display:block;font-size:13px;font-weight:700;color:var(--muted);margin-bottom:5px}
   .field input{width:100%;font-size:16px;padding:10px 12px;border:1px solid var(--line);border-radius:10px}
   .field input:focus{outline:2px solid var(--accent);border-color:var(--accent)}
+  .field select{width:100%;font-size:16px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .field select:focus{outline:2px solid var(--accent);border-color:var(--accent)}
   .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
   .search-results{margin-top:8px;max-height:210px;overflow:auto;border:1px solid var(--line);border-radius:10px}
   .sr-item{padding:9px 12px;border-bottom:1px solid #f0f2f5;cursor:pointer;font-size:14px;display:flex;justify-content:space-between}
@@ -141,6 +170,20 @@
     body.printing-today .tradeable{ border-bottom:none !important; color:var(--ink) !important; }
     body.printing-today .memo-add{ display:none !important; }
     body.printing-today .override-tag{ display:none !important; }
+    body.printing-today th.sortable .arrow{ display:none !important; }
+    body.printing-today .sec-tag{ padding:0 4px; font-size:8px; border:none; }
+    body.printing-today .sec-tag.manual::after{ display:none; }
+    body.printing-today .w-all{ font-size:7.5px; }
+    body.printing-today .sector-card{ border-radius:4px; padding:4px 8px; margin-bottom:6px;
+      border-color:#c8ced8; break-inside:avoid; page-break-inside:avoid; }
+    body.printing-today .sector-card .sc-head{ margin-bottom:3px; }
+    body.printing-today .sector-card .sc-head b{ font-size:9.5px; }
+    body.printing-today .sector-card .sc-head .sc-base{ font-size:7.5px; }
+    body.printing-today .sector-bar{ height:8px; border-radius:4px; }
+    body.printing-today .sector-legend{ gap:2px 10px; margin-top:4px; }
+    body.printing-today .sector-legend .sl{ font-size:8px; }
+    body.printing-today .sector-legend .sl-amt{ font-size:7.5px; }
+    body.printing-today .acc-head .left .sectors{ font-size:8px; }
     body.printing-today #printBar{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
       border-bottom:1.5px solid #1a2332; padding-bottom:4px; margin-bottom:14px; }
     body.printing-today .pb-title{ font-size:13px; font-weight:800; }
@@ -226,7 +269,10 @@
   <!-- 오늘의 시세 -->
   <section id="tab-today">
     <div class="hint">숫자(수량·평단)를 <b>클릭</b>하면 바로 고칠 수 있어요. 추가 매수·매도를 하시면 여기서 수량과 평단만 고치면 됩니다.
-      평단을 넣어야 수익률이 계산됩니다.</div>
+      평단을 넣어야 수익률이 계산됩니다.<br>
+      표의 <b>제목줄을 클릭</b>하면 그 열로 정렬됩니다 (한 번 더 누르면 반대 순서, 그다음은 원래 순서).
+      <b>섹터 태그를 클릭</b>하면 분류를 직접 바꿀 수 있어요.</div>
+    <div id="sectorBar"></div>
     <div id="accounts" class="loading">불러오는 중…</div>
   </section>
 
@@ -317,6 +363,25 @@
       <button class="btn" onclick="closeEdit()">취소</button>
       <button class="btn" id="btn-reset-div" onclick="resetDivOverride()" style="display:none">자동값으로 초기화</button>
       <button class="btn primary" onclick="submitEdit()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 섹터 직접 지정 모달 -->
+<div class="mask" id="sectorMask">
+  <div class="modal">
+    <h3>섹터 지정</h3>
+    <p class="sub" id="sector-sub"></p>
+    <div class="field">
+      <label>이 종목의 섹터 (목록에서 고르거나 새 이름을 직접 적어도 됩니다)</label>
+      <input id="sector-sel" list="sector-list" autocomplete="off" placeholder="예: 반도체, 바이오·헬스, 자동차">
+      <datalist id="sector-list"></datalist>
+      <div id="sector-auto-hint" style="font-size:12px;color:var(--muted);margin-top:5px"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeSector()">취소</button>
+      <button class="btn" id="btn-reset-sector" onclick="resetSector()" style="display:none">자동 분류로 초기화</button>
+      <button class="btn primary" onclick="submitSector()">저장</button>
     </div>
   </div>
 </div>
@@ -419,6 +484,26 @@ const won = n => (n==null? '–' : Math.round(n).toLocaleString('ko-KR')+'원');
 const pct = n => (n==null? '–' : (n>0?'+':'')+n.toFixed(2)+'%');
 const cls = n => (n==null?'flat': n>0?'up': n<0?'down':'flat');
 const price = n => (n==null? '–' : Number(n).toLocaleString('ko-KR'));
+/* 비중은 소수 한 자리 (12.3%) */
+const pctw = n => (n==null? '–' : n.toFixed(1)+'%');
+
+/* 섹터별 고정 색. 막대·범례·표의 태그가 같은 색을 쓰도록 한 곳에서 정합니다. */
+const SECTOR_COLOR = {
+  '반도체':'#2f6fb5', 'AI·빅테크':'#6b4fc9', '미국지수':'#0b6e4f', '국내지수':'#4a9c78',
+  '배당·밸류':'#b7791f', '원자재':'#c2802b', '채권':'#5f6875', '채권혼합':'#8a94a3',
+  '우주항공':'#a34b8f', '원자력':'#0f8a9c', '2차전지':'#7a9a2e', '자동차':'#b5523c',
+  '바이오·헬스':'#2fa08a', '조선·해운':'#4a6f9c', '은행·금융':'#86643a',
+  '리츠·부동산':'#a6785c', '소비재':'#c96a9a', '게임·엔터':'#9455d0',
+  '해외주식':'#1a7f9c', '국내테마':'#6f8f3c', '국내파생':'#9c3f2f',
+};
+// 직접 입력한 섹터에도 색을 줍니다. 이름으로 정하니까 새로고침해도 같은 색입니다.
+const SECTOR_FALLBACK = ['#2f6fb5','#6b4fc9','#0b6e4f','#b7791f','#a34b8f','#0f8a9c','#7a9a2e','#b5523c'];
+function secColor(s){
+  if(SECTOR_COLOR[s]) return SECTOR_COLOR[s];
+  if(!s) return '#aab2be';
+  let n=0; for(const ch of s) n=(n+ch.codePointAt(0))%SECTOR_FALLBACK.length;
+  return SECTOR_FALLBACK[n];
+}
 
 /* 오늘 날짜 + 요일 (인쇄 머리글용) */
 function todayLabel(){
@@ -437,7 +522,7 @@ function dateShort(s){
 async function loadAll(){
   const r = await fetch('/api/data'); STATE = await r.json();
   document.getElementById('updated').textContent = STATE.업데이트시각;
-  renderIndex(); renderSummary(); renderToday(); renderDiv(); renderChart(); renderManage(); renderAccManage();
+  renderIndex(); renderSummary(); renderSectorBar(); renderToday(); renderDiv(); renderChart(); renderManage(); renderAccManage();
 }
 
 function renderIndex(){
@@ -465,21 +550,86 @@ function renderSummary(){
     + `<span class="pb-total">총 <b>${won(STATE.총평가금액)}</b> · 수익률 <b class="${cls(STATE.총수익률)}">${pct(STATE.총수익률)}</b></span>`;
 }
 
+/* ---------- 섹터 비중 막대 ---------- */
+function renderSectorBar(){
+  const box = document.getElementById('sectorBar');
+  const list = (STATE.섹터집계||[]).filter(s=>s.평가금액>0);
+  if(!list.length){ box.innerHTML=''; return; }
+  box.innerHTML = `<div class="sector-card">
+    <div class="sc-head"><b>섹터 비중</b>
+      <span class="sc-base">${won(STATE.비중기준금액)} 기준 (평가금액이 계산된 종목 전체)</span></div>
+    <div class="sector-bar">${list.map(s=>
+      `<span style="width:${s.비중}%;background:${secColor(s.섹터)}" title="${s.섹터} ${s.비중}%"></span>`).join('')}</div>
+    <div class="sector-legend">${list.map(s=>
+      `<span class="sl"><span class="dot" style="background:${secColor(s.섹터)}"></span>${s.섹터}`
+      + ` <span class="sl-pct">${pctw(s.비중)}</span>`
+      + ` <span class="sl-amt">${won(s.평가금액)} · ${s.종목수}종목</span></span>`).join('')}</div>
+  </div>`;
+}
+
+/* ---------- 표 정렬 ----------
+   계좌별로 따로 기억합니다. 화면에서만 쓰고 파일에는 저장하지 않습니다 —
+   '종목 관리'에서 손으로 맞춰 둔 순서를 정렬이 덮어쓰면 안 되니까요.
+   같은 열을 세 번 누르면 원래(손으로 맞춘) 순서로 돌아옵니다. */
+const SORT = {};
+const SORT_KEYS = {
+  '종목':'종목명', '섹터':'섹터', '수량':'수량', '평단가':'평단가', '종가':'오늘종가',
+  '수익률':'오늘수익률', '비중':'계좌내비중', '배당일자':'배당일자', '배당/주':'주당배당금',
+  '배당금':'배당금', '평가금액':'평가금액', '평가손익':'평가손익',
+};
+function sortBy(accName, label){
+  const st = SORT[accName];
+  // 이름·섹터는 ㄱ→ㅎ부터, 숫자는 큰 값부터가 자연스럽습니다.
+  const first = (label==='종목'||label==='섹터') ? 1 : -1;
+  if(!st || st.label!==label){ SORT[accName] = {label, dir:first, stage:1}; }
+  else if(st.stage===1){ st.dir = -st.dir; st.stage = 2; }
+  else { delete SORT[accName]; }          // 세 번째 클릭 = 원래(손으로 맞춘) 순서
+  renderToday();
+}
+function sortedRows(acc){
+  const st = SORT[acc.계좌명];
+  const rows = acc.종목.slice();
+  if(!st) return rows;
+  const key = SORT_KEYS[st.label];
+  rows.sort((a,b)=>{
+    const x=a[key], y=b[key];
+    const xn=(x===null||x===undefined||x===''), yn=(y===null||y===undefined||y==='');
+    if(xn&&yn) return 0;
+    if(xn) return 1;        // 값이 없는 종목은 방향과 무관하게 늘 아래
+    if(yn) return -1;
+    const c = (typeof x==='string') ? x.localeCompare(y,'ko') : (x<y?-1:x>y?1:0);
+    return c*st.dir;
+  });
+  return rows;
+}
+function sortTh(accName, label, extraClass){
+  const st = SORT[accName];
+  const on = !!(st && st.label===label);
+  const arrow = on ? (st.dir===-1?'▼':'▲') : '⇅';
+  return `<th class="sortable${on?' on':''}${extraClass?' '+extraClass:''}" onclick="sortBy('${accName}','${label}')"`
+    + ` title="클릭하면 이 열로 정렬 (한 번 더 누르면 반대 순서, 그다음은 원래 순서)">`
+    + `${label}<span class="arrow">${arrow}</span></th>`;
+}
+
 function renderToday(){
   const box = document.getElementById('accounts'); box.innerHTML=''; box.classList.remove('loading');
   for(const acc of STATE.계좌){
     let rows='';
-    for(const h of acc.종목){
+    for(const h of sortedRows(acc)){
       const memoTag = h.메모
         ? `<span class="${h.메모.includes('매도')?'sell-tag':'memo-tag'}" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','memo')" title="클릭하면 메모 수정">${h.메모}</span>`
         : `<span class="memo-add" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','memo')" title="메모 추가">+메모</span>`;
       const noCode = h.코드없음 ? `<span class="nocode" onclick="openCode('${acc.계좌명}','${esc(h.종목명)}')">코드 없음</span>`:'';
       rows += `<tr>
         <td class="name"><span class="tradeable" onclick="openTrade('${acc.계좌명}','${esc(h.종목명)}')" title="클릭하면 매수/매도">${h.종목명}</span>${memoTag}${noCode}</td>
+        <td><span class="sec-tag${h.섹터수동?' manual':''}" style="color:${secColor(h.섹터)};background:${secColor(h.섹터)}22"
+            onclick="openSector('${acc.계좌명}','${esc(h.종목명)}')"
+            title="${h.섹터수동?'직접 지정한 섹터입니다. ':''}클릭하면 섹터를 바꿀 수 있어요">${h.섹터}</span></td>
         <td class="editable" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','qty')">${h.수량!=null?h.수량.toLocaleString('ko-KR'):'–'}</td>
         <td class="editable ${h.평단가==null?'muted-cell':''}" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','avg')">${h.평단가!=null?price(h.평단가):'입력'}</td>
         <td><b>${price(h.오늘종가)}</b></td>
         <td class="${cls(h.오늘수익률)}"><b>${pct(h.오늘수익률)}</b></td>
+        <td><span class="w-acc">${pctw(h.계좌내비중)}</span><span class="w-all">전체 ${pctw(h.전체비중)}</span></td>
         <td>${h.배당일자? dateShort(h.배당일자) : '–'}</td>
         <td class="editable" onclick="openEdit('${acc.계좌명}','${esc(h.종목명)}','div')">${h.주당배당금!=null?price(h.주당배당금):'–'}${h.주당배당금수정!=null?'<span class="override-tag" title="직접 입력한 값 (자동조회값 아님)">✎</span>':''}</td>
         <td>${h.배당금!=null?won(h.배당금):'–'}</td>
@@ -487,18 +637,23 @@ function renderToday(){
         <td class="${cls(h.평가손익)}">${h.평가손익!=null?won(h.평가손익):'–'}</td>
       </tr>`;
     }
+    const top3 = (acc.섹터집계||[]).filter(s=>s.평가금액>0).slice(0,3)
+      .map(s=>`${s.섹터} ${pctw(s.비중)}`).join(' · ');
     box.innerHTML += `<div class="acc">
       <div class="acc-head">
-        <div class="left"><b>${acc.계좌명}</b><span class="desc">${acc.설명}</span><span class="num">${acc.계좌번호}</span></div>
+        <div class="left"><b>${acc.계좌명}</b><span class="desc">${acc.설명}</span><span class="num">${acc.계좌번호}</span>
+          <span class="sectors">${top3}</span></div>
         <div class="right"><div class="r-lbl">계좌 수익률 / 평가금액 / 이번달 배당금</div>
           <div class="r-val ${cls(acc.수익률)}">${pct(acc.수익률)} <span style="color:var(--ink);font-size:15px">· ${won(acc.평가금액합)} · ${won(acc.이번달배당금)}</span></div></div>
       </div>
       <div class="tblwrap"><table class="holdings">
-        <colgroup><col style="width:38%"><col style="width:5%"><col style="width:7%">
-          <col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:6%">
-          <col style="width:7%"><col style="width:9%"><col style="width:9%"></colgroup>
-        <thead><tr><th class="name">종목</th><th>수량</th><th>평단가</th><th>종가</th>
-          <th>수익률</th><th>배당일자</th><th>배당/주</th><th>배당금</th><th>평가금액</th><th>평가손익</th></tr></thead>
+        <colgroup><col style="width:28%"><col style="width:7%"><col style="width:5%"><col style="width:7%">
+          <col style="width:7%"><col style="width:6%"><col style="width:7%"><col style="width:6%">
+          <col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:7%"></colgroup>
+        <thead><tr>${
+          ['종목','섹터','수량','평단가','종가','수익률','비중','배당일자','배당/주','배당금','평가금액','평가손익']
+            .map(l=>sortTh(acc.계좌명, l, l==='종목'?'name':'')).join('')
+        }</tr></thead>
         <tbody>${rows}</tbody></table></div></div>`;
   }
 }
@@ -960,6 +1115,37 @@ async function submitEdit(){
 async function resetDivOverride(){
   await post('/api/holding',{계좌명:editCtx.acc,종목명:editCtx.name,주당배당금수정:null});
   closeEdit(); loadAll();
+}
+
+/* ---------- 섹터 지정 ---------- */
+// 섹터는 종목명으로 자동 분류되지만, 어색한 종목은 여기서 직접 골라 고정할 수 있습니다.
+// (예: '미국S&P500&GOLD' 처럼 지수와 금이 반씩 섞인 상품)
+let sectorCtx = null;
+function openSector(acc, name){
+  const h = findH(acc, name); sectorCtx = {acc, name};
+  document.getElementById('sector-sub').textContent = `${acc} · ${name}`;
+  const list = STATE.섹터목록 || [];
+  document.getElementById('sector-list').innerHTML =
+    list.map(x=>`<option value="${x}"></option>`).join('');
+  document.getElementById('sector-sel').value = h.섹터 || '';
+  document.getElementById('sector-auto-hint').textContent = (h.섹터수동
+    ? '지금은 직접 지정한 섹터를 쓰고 있습니다. '
+    : '지금은 종목명으로 자동 분류된 섹터입니다. 여기서 정하면 이 종목만 고정됩니다. ')
+    + '목록에 없는 이름을 적으면 새 섹터가 됩니다. 비워 두고 저장하면 자동 분류로 돌아갑니다.';
+  document.getElementById('btn-reset-sector').style.display = h.섹터수동 ? 'inline-block' : 'none';
+  document.getElementById('sectorMask').classList.add('show');
+  setTimeout(()=>document.getElementById('sector-sel').focus(),50);
+}
+function closeSector(){ document.getElementById('sectorMask').classList.remove('show'); }
+async function submitSector(){
+  // 비워 두고 저장하면 '자동 분류로 초기화'와 같은 뜻입니다.
+  const v = document.getElementById('sector-sel').value.trim();
+  await post('/api/holding', {계좌명:sectorCtx.acc, 종목명:sectorCtx.name, 섹터:v});
+  closeSector(); loadAll();
+}
+async function resetSector(){
+  await post('/api/holding', {계좌명:sectorCtx.acc, 종목명:sectorCtx.name, 섹터:''});
+  closeSector(); loadAll();
 }
 
 /* ---------- 코드 찾기 ---------- */
